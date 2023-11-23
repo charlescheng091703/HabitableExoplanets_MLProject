@@ -11,9 +11,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
-from torch import tensor, float32, cuda, no_grad
+from torch import tensor, float32, cuda, no_grad, cat, mean
+from torch import abs as tAbs
 # import torch.nn.functional as F
 from torch.nn import Module, Linear, Tanh, MSELoss
+import torch.nn.functional as F
 from torch.optim import Adam
 # from torch.autograd import Variable
 from torch.utils.data import DataLoader, Dataset
@@ -59,7 +61,17 @@ class FeedForwardNN(Module):
     x = self.linear2(x)
     x = self.relu2(x)
     x = self.linear_out(x)
-    return x
+    return x.squeeze().unsqueeze(1)
+  
+class PolynomialRegression(Module):
+  def __init__(self, input_size, degree):
+      super(PolynomialRegression, self).__init__()
+      self.degree = degree
+      self.fc = Linear(degree*input_size, 1)
+
+  def forward(self, x):
+      x_poly = cat([x.squeeze() ** i for i in range(1, self.degree + 1)], dim=1)
+      return self.fc(x_poly)
 
 class Datasets():
     def __init__(self, train_pname, train_data, train_labels, train_ld, valid_pname, valid_data, valid_labels, valid_ld, test_pname, test_data, test_labels, test_ld):
@@ -78,7 +90,7 @@ class Datasets():
 
 ########## Helper functions ##########
 
-def trainNN(dataloader, model, loss_func, optimizer, device):
+def train(dataloader, model, loss_func, optimizer, device):
   model.train()
   train_loss = []
 
@@ -87,7 +99,7 @@ def trainNN(dataloader, model, loss_func, optimizer, device):
     X, y = X.to(device), y.to(device)
 
     pred = model(X)
-    loss = loss_func(pred, y.unsqueeze(1))
+    loss = loss_func(pred, y)
 
     optimizer.zero_grad()
     loss.backward()
@@ -99,12 +111,12 @@ def trainNN(dataloader, model, loss_func, optimizer, device):
       then = datetime.datetime.now()
       if then-now != 0:
         iters /= (then - now).total_seconds()
-        print(f"loss: {loss:>6f} [{current:>5d}/{17000}] ({iters:.1f} its/sec)")
+        # print(f"loss: {loss:>6f} [{current:>5d}/{17000}] ({iters:.1f} its/sec)")
       now = then
       train_loss.append(loss)
   return train_loss
 
-def testNN(dataloader, model, loss_func, device):
+def test(dataloader, model, loss_func, device):
   size = len(dataloader)
   num_batches = 0
   model.eval()
@@ -114,11 +126,36 @@ def testNN(dataloader, model, loss_func, device):
     for X, y in dataloader:
         X, y = X.to(device), y.to(device)
         pred = model(X)
-        test_loss += loss_func(pred, y.unsqueeze(1)).item()
+        test_loss += loss_func(pred, y).item()
         num_batches = num_batches + 1
   test_loss /= num_batches
-  print(f"Avg Loss: {test_loss:>8f}\n")
+  # print(f"Avg Loss: {test_loss:>8f}\n")
   return test_loss
+
+def plotLearnCurves(train_loss, valid_loss, name='default'):
+  plt.figure()
+  plt.xlabel("Epochs")
+  plt.ylabel("Loss")
+  plt.title("Training: Loss vs Epochs")
+  plt.plot([i for i in range(len(train_loss))], tensor(train_loss).mean(axis=1))
+  plt.savefig(name+"train.png")
+
+  plt.figure()
+  plt.xlabel("Epochs")
+  plt.ylabel("Loss")
+  plt.title("Validation: Loss vs Epochs")
+  plt.plot([i for i in range(len(valid_loss))], valid_loss)
+  plt.savefig(name+"valid.png")
+
+def calcTestMSE(model, data):
+  pred = model(data.test_data[:][0]).squeeze()
+  tru = tensor(data.test_labels)
+  mse_loss = F.mse_loss(pred, tru)
+  print("Mean squared error =", mse_loss.item())
+  
+  abs_errors = tAbs(pred - tru)
+  average_abs_error = mean(abs_errors).item()
+  print("Average absolute error =", average_abs_error)
 
 ########## Main functions ##########
 
@@ -204,52 +241,56 @@ def readData():
     return Datasets(train_pname, train_data, train_labels, train_loader, valid_pname, valid_data, valid_labels, valid_loader, test_pname, test_data, test_labels, test_loader)
    
 # Multivariate linear regression 
-def linearReg():
-    # TODO: not implemented 
-    pass
+def polyReg(data, deg, lr=1e-4, max_epoch=10, loss_thres=1e-2):
+    print("\n=============== Polynomial Regression ===============\n")
+
+    device = "cuda" if cuda.is_available() else "cpu"
+    input_size = data.train_data.data.shape[1] - 1  # Exclude the planet names
+    poly_model = PolynomialRegression(input_size, deg).to(device)
+    loss_func = MSELoss()
+    optimizer = Adam(poly_model.parameters(), lr=lr)
+
+    epochs = 0
+    train_loss = []
+    valid_loss = [] 
+    while epochs < max_epoch and not (len(valid_loss) >= 2 and abs(valid_loss[-1] - valid_loss[-2]) < loss_thres):
+        print(f"Epoch {epochs + 1}", end='\r')
+
+        losses = train(data.train_ld, poly_model, loss_func, optimizer, device)
+        train_loss.append(losses)
+        valid_loss.append(test(data.valid_ld, poly_model, loss_func, device))
+        epochs += 1
+
+    plotLearnCurves(train_loss, valid_loss, name="poly_reg_")
+    calcTestMSE(poly_model, data)
 
 # Feed forward neutral network 
-def FFN(data):
+def FFN(data, lr=1e-4, max_epoch=10, loss_thres=1e-2):
     print("\n=============== Feed Forward Neural Network ===============\n")
 
     device = "cuda" if cuda.is_available() else "cpu"
     ff = FeedForwardNN().to(device)
     loss_func = MSELoss() 
-    optimizer = Adam(ff.parameters(), lr=1e-3)
+    optimizer = Adam(ff.parameters(), lr=lr)
 
     epochs = 0
     train_loss = []
     valid_loss = []
-    while epochs < 50 and not (len(valid_loss) >= 2 and abs(valid_loss[-1]-valid_loss[-2]) < 5e-4): 
+    while epochs < max_epoch and not (len(valid_loss) >= 2 and abs(valid_loss[-1]-valid_loss[-2]) < loss_thres): 
         print(f"Epoch {epochs+1}", end='\r')
-        losses = trainNN(data.train_ld, ff, loss_func, optimizer, device)
+        losses = train(data.train_ld, ff, loss_func, optimizer, device)
         train_loss.append(losses)
-        valid_loss.append(testNN(data.valid_ld, ff, loss_func, device))
+        valid_loss.append(test(data.valid_ld, ff, loss_func, device))
         epochs += 1
     
-    plt.figure()
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.title("Training: Loss vs Epochs")
-    plt.plot([i for i in range(len(train_loss))], tensor(train_loss).mean(axis=1))
-    plt.savefig("mnist_reg_train.png")
-    
-    plt.figure()
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.title("Validation: Loss vs Epochs")
-    plt.plot([i for i in range(len(valid_loss))], valid_loss)
-    plt.savefig("mnist_reg_valid.png")
-    
-    # pred = ff(data.test_data[:][0])
-    # tru = data.test_labels 
+    plotLearnCurves(train_loss, valid_loss, name="ffn_")
+    calcTestMSE(ff, data)
 
 # Main function 
 def habitExo():
     data = readData()
-    FFN(data)
-    return # Following not implemented 
-    linearReg()
+    FFN(data, lr=1e-4, max_epoch=50, loss_thres=1e-4)
+    polyReg(data, deg=1, lr=1e-4, max_epoch=200, loss_thres=1e-2)
 
 if __name__ == "__main__":
     habitExo()
