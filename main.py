@@ -3,9 +3,6 @@
 # Authors: Charles Cheng and Hunter Cordes 
  
 # Imports 
-# import sys
-# import random
-# import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,11 +10,9 @@ import matplotlib
 matplotlib.use('Agg')
 from torch import tensor, float32, cuda, no_grad, cat, mean
 from torch import abs as tAbs
-# import torch.nn.functional as F
 from torch.nn import Module, Linear, Tanh, MSELoss
 import torch.nn.functional as F
 from torch.optim import Adam
-# from torch.autograd import Variable
 from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
@@ -152,7 +147,7 @@ def calcTestMSE(model, data):
   tru = tensor(data.test_labels)
   mse_loss = F.mse_loss(pred, tru)
   print("Mean squared error =", mse_loss.item())
-  
+
   abs_errors = tAbs(pred - tru)
   average_abs_error = mean(abs_errors).item()
   print("Average absolute error =", average_abs_error)
