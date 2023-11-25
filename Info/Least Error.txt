@@ -1,0 +1,18 @@
+Poly Reg:
+
+Configeration Square Means: [0.005099002486750008, (LR: 0.0001, LS: 1e-05)]
+Not bad weird shape
+Configeration Absolute Means: [0.04698133184052126, (LR: 0.01, LS: 0.1)]
+Not good graph (noisy)
+
+Decent Settings
+# 1e-3/1e-4 20 epoc 1e-4/1e-6 50 epoc 1e-4/1e-2 200 epoc
+# 1e-4/1e-5 30/130 epoc
+
+FFN:
+
+Configeration Square Means: [0.00024023025346894082, (0.01, 1e-06)]
+Configeration Absolute Means: [0.01108478753838527, (0.01, 1e-06)]
+
+Decent Settings
+# 1e-4/1e-6 200 epoc 1e-3/1e-6 200 epoc

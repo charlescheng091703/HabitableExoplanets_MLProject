@@ -2,21 +2,24 @@
 # CS 349 Machine Learning Final Project
 # Authors: Charles Cheng and Hunter Cordes 
  
-# Imports 
+# General Imports 
 import numpy as np
 import pandas as pd
+import datetime
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import xlsxwriter
+# Torch Imports
 from torch import tensor, float32, cuda, no_grad, cat, mean
 from torch import abs as tAbs
 from torch.nn import Module, Linear, Tanh, MSELoss
 import torch.nn.functional as F
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset
+# SKLearn Imports
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-import datetime
 
 ########## Classes ##########
 
@@ -104,9 +107,11 @@ def train(dataloader, model, loss_func, optimizer, device):
       loss, current = loss.item(), batch * len(X)
       iters = 10 * len(X)
       then = datetime.datetime.now()
-      if then-now != 0:
+      try:
         iters /= (then - now).total_seconds()
         # print(f"loss: {loss:>6f} [{current:>5d}/{17000}] ({iters:.1f} its/sec)")
+      except:
+        iters /= 1
       now = then
       train_loss.append(loss)
   return train_loss
@@ -134,6 +139,7 @@ def plotLearnCurves(train_loss, valid_loss, name='default'):
   plt.title("Training: Loss vs Epochs")
   plt.plot([i for i in range(len(train_loss))], tensor(train_loss).mean(axis=1))
   plt.savefig(name+"train.png")
+  plt.close()
 
   plt.figure()
   plt.xlabel("Epochs")
@@ -141,6 +147,7 @@ def plotLearnCurves(train_loss, valid_loss, name='default'):
   plt.title("Validation: Loss vs Epochs")
   plt.plot([i for i in range(len(valid_loss))], valid_loss)
   plt.savefig(name+"valid.png")
+  plt.close()
 
 def calcTestMSE(model, data):
   pred = model(data.test_data[:][0]).squeeze()
@@ -151,6 +158,8 @@ def calcTestMSE(model, data):
   abs_errors = tAbs(pred - tru)
   average_abs_error = mean(abs_errors).item()
   print("Average absolute error =", average_abs_error)
+
+  return mse_loss.item(), average_abs_error
 
 ########## Main functions ##########
 
@@ -208,6 +217,17 @@ def readData():
     print("\nESI Statistics:")
     print(df_labels_stats)
 
+    # Excel sheet output
+    writer = pd.ExcelWriter("features_statistics.xlsx", engine="xlsxwriter")
+    df_data_stats.to_excel(writer, sheet_name="Sheet1", startrow=1, header=False, index=False)
+    workbook = writer.book
+    worksheet = writer.sheets["Sheet1"]
+    (max_row, max_col) = df_data_stats.shape
+    column_settings = [{"header": column} for column in df_data_stats.columns]
+    worksheet.add_table(0, 0, max_row, max_col - 1, {"columns": column_settings})
+    worksheet.set_column(0, max_col - 1, 12)
+    writer.close()
+
     # Split samples in training, validation, and testing sets 
     data = df.values
     labels = p_esi_column.values
@@ -236,7 +256,7 @@ def readData():
     return Datasets(train_pname, train_data, train_labels, train_loader, valid_pname, valid_data, valid_labels, valid_loader, test_pname, test_data, test_labels, test_loader)
    
 # Multivariate linear regression 
-def polyReg(data, deg, lr=1e-4, max_epoch=10, loss_thres=1e-2):
+def polyReg(data, deg, lr=1e-4, max_epoch=10, loss_thres=1e-2, run=0):
     print("\n=============== Polynomial Regression ===============\n")
 
     device = "cuda" if cuda.is_available() else "cpu"
@@ -256,11 +276,12 @@ def polyReg(data, deg, lr=1e-4, max_epoch=10, loss_thres=1e-2):
         valid_loss.append(test(data.valid_ld, poly_model, loss_func, device))
         epochs += 1
 
-    plotLearnCurves(train_loss, valid_loss, name="poly_reg_")
-    calcTestMSE(poly_model, data)
+    plotLearnCurves(train_loss, valid_loss, name=f"poly_reg_{run}")
+    sq_err, abs_err = calcTestMSE(poly_model, data)
+    return sq_err, abs_err
 
 # Feed forward neutral network 
-def FFN(data, lr=1e-4, max_epoch=10, loss_thres=1e-2):
+def FFN(data, lr=1e-4, max_epoch=10, loss_thres=1e-2, run=0):
     print("\n=============== Feed Forward Neural Network ===============\n")
 
     device = "cuda" if cuda.is_available() else "cpu"
@@ -278,14 +299,38 @@ def FFN(data, lr=1e-4, max_epoch=10, loss_thres=1e-2):
         valid_loss.append(test(data.valid_ld, ff, loss_func, device))
         epochs += 1
     
-    plotLearnCurves(train_loss, valid_loss, name="ffn_")
-    calcTestMSE(ff, data)
+    plotLearnCurves(train_loss, valid_loss, name=f"ffn_{run}")
+    return calcTestMSE(ff, data)
 
 # Main function 
 def habitExo():
     data = readData()
-    FFN(data, lr=1e-4, max_epoch=50, loss_thres=1e-4)
-    polyReg(data, deg=1, lr=1e-4, max_epoch=200, loss_thres=1e-2)
+    # 1e-4/1e-6 200 epoc
+    #FFN(data, lr=1e-4, max_epoch=50, loss_thres=1e-4)
+    # 1e-3/1e-4 20 epoc 1e-4/1e-6 50 epoc 1e-4/1e-2 200 epoc
+    # 1e-4/1e-5 30/130 epoc
+    #polyReg(data, deg=1, lr=1e-2, max_epoch=200, loss_thres=1e-1, run="test")
+    testing_poly(data)
+  
+def testing_poly(data):
+   lr = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+   loss_threses = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+   #lr = [1e-3, 1e-4]
+   #loss_threses = [1e-4, 1e-5]
+   config_sq = [10, (0,0)]
+   config_abs = [10, (0,0)]
+   for l in lr:
+    for L in loss_threses:
+      sq_err, abs_err = FFN(data, lr=l, max_epoch=200, loss_thres=L, run=f"LR{l} LS{L}")
+      if sq_err < config_sq[0]:
+         config_sq[0] = sq_err
+         config_sq[1] = (l,L)
+      if abs_err < config_abs[0]:
+         config_abs[0] = abs_err
+         config_abs[1] = (l,L)
+      print(f"Run: {l}/{L}")
+   print(f"Configeration Square Means: {config_sq}")
+   print(f"Configeration Absolute Means: {config_abs}")
 
 if __name__ == "__main__":
     habitExo()
